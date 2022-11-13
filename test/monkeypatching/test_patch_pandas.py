@@ -131,6 +131,52 @@ def test_frame_dropna():
     pandas.testing.assert_frame_equal(lineage_output.reset_index(drop=True), expected_lineage_df.reset_index(drop=True))
 
 
+
+def test_frame_fillna():
+    """
+    Tests whether the monkey patching of ('pandas.core.frame', 'fillna') works
+    """
+    test_code = cleandoc("""
+        import pandas as pd
+
+        df = pd.DataFrame([0, 2, 4, None, None,6,3], columns=['A'])
+        assert len(df) == 7
+        df = df.fillna(value=123)
+        assert df.iloc[4].item() == 123.0
+        """)
+    inspector_result = _pipeline_executor.singleton.run(python_code=test_code, track_code_references=True,
+                                                        inspections=[RowLineage(2)])
+
+    expected_dag = networkx.DiGraph()
+    expected_data_source = DagNode(0,
+                                   BasicCodeLocation("<string-source>",3 ),
+                                   OperatorContext(OperatorType.DATA_SOURCE,
+                                                   FunctionInfo('pandas.core.frame', 'DataFrame')),
+                                   DagNodeDetails(None, ['A']),
+                                   OptionalCodeInfo(CodeReference(3, 5, 3, 59),
+                                                    "pd.DataFrame([0, 2, 4, None, None,6,3], columns=['A'])"))
+    expected_modify = DagNode(1,
+                              BasicCodeLocation("<string-source>",4),
+                              OperatorContext(OperatorType.PROJECTION_MODIFY,
+                              FunctionInfo('pandas.core.frame', 'fillna')),
+                              DagNodeDetails("value '123'", ['A']),
+                              OptionalCodeInfo(CodeReference(5, 5, 5, 25), 'df.fillna(value=123)'))
+
+
+
+    expected_dag.add_edge(expected_data_source, expected_modify)
+    compare(networkx.to_dict_of_dicts(inspector_result.dag), networkx.to_dict_of_dicts(expected_dag))
+
+    inspection_results_data_source = inspector_result.dag_node_to_inspection_results[expected_modify]
+    lineage_output = inspection_results_data_source[RowLineage(2)]
+    expected_lineage_df = DataFrame([[0., {LineageId(0, 0)}],
+                                     [2., {LineageId(0, 1)}]],
+                                    columns=['A', 'mlinspect_lineage'])
+    print('another attemp at fillna')
+    pandas.testing.assert_frame_equal(lineage_output.reset_index(drop=True), expected_lineage_df.reset_index(drop=True))
+    print('success')
+
+
 def test_frame__getitem__series():
     """
     Tests whether the monkey patching of ('pandas.core.frame', '__getitem__') works for a single string argument

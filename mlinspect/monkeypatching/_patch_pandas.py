@@ -114,6 +114,57 @@ class DataFramePatching:
 
         return execute_patched_func(original, execute_inspections, self, *args, **kwargs)
 
+@gorilla.name('fillna')
+    @gorilla.settings(allow_hit=True)
+    def patched_fillna(self, *args, **kwargs):
+        """ Patch for ('pandas.core.frame', 'fillna') """
+        original = gorilla.get_original_attribute(pandas.DataFrame, 'fillna')
+
+        def execute_inspections(op_id, caller_filename, lineno, optional_code_reference, optional_source_code):
+            """ Execute inspections, add DAG node """
+            function_info = FunctionInfo('pandas.core.frame', 'fillna')
+
+            input_info = get_input_info(self, caller_filename, lineno, function_info, optional_code_reference,
+                                        optional_source_code)
+            operator_context = OperatorContext(OperatorType.PROJECTION_MODIFY, function_info)
+            input_infos = PandasBackend.before_call(operator_context, [input_info.annotated_dfobject])
+            # No input_infos copy needed because it's only a selection and the rows not being removed don't change
+            result = original(input_infos[0].result_data, *args,**kwargs)
+
+
+            backend_result = PandasBackend.after_call(operator_context,
+                                                      input_infos,
+                                                      result)
+            new_return_value = backend_result.annotated_dfobject.result_data
+
+            # description = "fillna '{}' with '{}'".format(args[0],args[1])
+            description=self.get_fillna_description(**kwargs)
+            print(description)
+            dag_node = DagNode(op_id,
+                               BasicCodeLocation(caller_filename, lineno),
+                               operator_context,
+                               DagNodeDetails(description, list(result.columns)),
+                               get_optional_code_info_or_none(optional_code_reference, optional_source_code))
+            add_dag_node(dag_node, [input_info.dag_node], backend_result)
+
+            return new_return_value
+
+        return execute_patched_func(original, execute_inspections, self, *args, **kwargs)
+
+    @staticmethod
+    def get_fillna_description(**kwargs):
+        """Get the description for a pd.fillna call"""
+        if 'method' in kwargs:
+            description = f"fillna method '{kwargs['method']}'"
+        elif 'value' in kwargs:
+            description = f"fillna value '{kwargs['value']}'"
+    
+        else:
+            description = None
+
+        return description
+
+
     @gorilla.name('__getitem__')
     @gorilla.settings(allow_hit=True)
     def patched__getitem__(self, *args, **kwargs):
